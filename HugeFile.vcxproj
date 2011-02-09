@@ -74,12 +74,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="BinEdit.h" />
+    <ClInclude Include="Defs.h" />
+    <ClInclude Include="HugeFile.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="HugeFile.rc" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="BinEdit.cpp" />
+    <ClCompile Include="HugeFile.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

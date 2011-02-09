@@ -1,11 +1,18 @@
 #include <Windows.h>
 #include <WindowsX.h>
+#include "Defs.h"
+#include "BinEdit.h"
+#include "resource.h"
 
-#define APP_NAME	TEXT("HugeFile")
+HINSTANCE hInst;
+TCHAR szTitle[MAX_LOADSTRING];			// タイトルバーのテキスト
+TCHAR szWindowClass[MAX_LOADSTRING];	// メインウィンドウクラス
 
-ATOM MyRegisterClass(HINSTANCE hInstance);
-BOOL InitInstance(HINSTANCE, int);
-LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam);
+static BinEdit binEdit;
+
+static ATOM MyRegisterClass(HINSTANCE hInstance);
+static BOOL InitInstance(HINSTANCE, int);
+static LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
 	UNREFERENCED_PARAMETER(hPrevInstance);
@@ -14,9 +21,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// 二重起動防止
 
-	HWND hWnd;
-	WNDCLASS wc;
+	hInst = hInstance;
+
 	MSG msg;
+	HACCEL hAccelTable;
+
+	// グローバル文字列の初期化
+	LoadString(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
+	LoadString(hInstance, IDC_BINEDIT, szWindowClass, MAX_LOADSTRING);
+
+	MyRegisterClass(hInstance);
+
+	if (!InitInstance(hInstance, nCmdShow)) {
+		MessageBox(NULL, TEXT("[ERROR] CreateWindow"), szTitle, MB_OK);
+		return EXIT_FAILURE;
+	}
+
+	hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDR_ACCELERATOR1));
+
+	while (GetMessage(&msg, NULL, 0, 0) > 0) {
+		if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg)) {
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+	}
+		
+	return msg.wParam;
+}
+
+ATOM MyRegisterClass(HINSTANCE hInstance) {
+	WNDCLASS wc;
 
 	wc.style = CS_HREDRAW | CS_VREDRAW;
 	wc.lpfnWndProc = WndProc;
@@ -26,42 +60,86 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 	wc.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
-	wc.lpszClassName = APP_NAME;
-	wc.lpszMenuName = NULL;
+	wc.lpszClassName = szWindowClass;
+	wc.lpszMenuName = MAKEINTRESOURCE(IDR_MENU1);
 
-	if (!RegisterClass(&wc)) {
-		MessageBox(NULL, TEXT("[ERROR] RegisterClass"), APP_NAME, MB_OK);
-		return EXIT_FAILURE;
-	}
+	return RegisterClass(&wc);
+}
 
-	hWnd = CreateWindow(APP_NAME, TEXT("Binary Editor"),
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
+	HWND hWnd;
+
+	hWnd = CreateWindow(szWindowClass, szTitle,
 		WS_OVERLAPPEDWINDOW, 
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 
 		NULL, NULL, hInstance, NULL);
 
-	if (!hWnd) {
-		MessageBox(NULL, TEXT("[ERROR] CreateWindow"), APP_NAME, MB_OK);
-		return EXIT_FAILURE;
+	if (hWnd == NULL) {
+		return FALSE;
 	}
 
-	ShowWindow(hWnd, SW_SHOW);
+	ShowWindow(hWnd, nCmdShow);
+	UpdateWindow(hWnd);
 
-	while (GetMessage(&msg, NULL, 0, 0) > 0) {
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
-	}
-		
-	return EXIT_SUCCESS;
+	return TRUE;
 }
 
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
+
+	int wmId, wmEvent;
+	PAINTSTRUCT ps;
+	HDC hdc;
+
 	switch (umsg) {
+	case WM_COMMAND:
+		wmId = LOWORD(wParam);
+		wmEvent = HIWORD(wParam);
+
+		switch (wmId) {
+		case ID_OPEN:
+			binEdit.OnOpen(hWnd);
+			break;
+
+		case ID_SAVE:
+			binEdit.OnSave(hWnd);
+			break;
+
+		case ID_SAVEAS:
+			binEdit.OnSaveAs(hWnd);
+			break;
+
+		case ID_QUIT:
+			binEdit.OnExit(hWnd);
+			PostQuitMessage(0);
+			break;
+
+		case ID_HELP_VERSION:
+			break;
+
+		default:
+			return DefWindowProc(hWnd, umsg, wParam, lParam);
+		}
+		break;
+
+	case WM_PAINT:
+		hdc = BeginPaint(hWnd, &ps);
+		binEdit.OnPaint(hWnd, hdc);
+		EndPaint(hWnd, &ps);
+		break;
+
+	case WM_KEYDOWN:
+		binEdit.OnKeyDown(hWnd, wParam);
+		break;
+
 	case WM_DESTROY:
 		PostQuitMessage(EXIT_SUCCESS);
-
+		break;
+		
 	default:
 		return DefWindowProc(hWnd, umsg, wParam, lParam);
 		
 	}
 	return 0;
 }
+
