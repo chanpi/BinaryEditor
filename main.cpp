@@ -70,7 +70,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
 	HWND hWnd;
 
 	hWnd = CreateWindow(szWindowClass, szTitle,
-		WS_OVERLAPPEDWINDOW, 
+		WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL, 
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 
 		NULL, NULL, hInstance, NULL);
 
@@ -130,6 +130,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 
 	case WM_KEYDOWN:
 		binEdit.OnKeyDown(hWnd, wParam);
+		break;
+
+	case WM_VSCROLL:
+		binEdit.OnVScroll(hWnd, wParam);
+		break;
+
+	case WM_HSCROLL:
+		binEdit.OnHScroll(hWnd, wParam);
+		break;
+
+	case WM_SIZE:
+		binEdit.OnSize(hWnd, LOWORD(lParam), HIWORD(lParam));
 		break;
 
 	case WM_DESTROY:
