@@ -132,6 +132,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 		binEdit.OnKeyDown(hWnd, wParam);
 		break;
 
+	case WM_MOUSEWHEEL:
+		if (GET_WHEEL_DELTA_WPARAM(wParam) < 0) {
+			binEdit.OnVScroll(hWnd, SB_LINEDOWN);
+		} else {
+			binEdit.OnVScroll(hWnd, SB_LINEUP);
+		}
+		break;
+
 	case WM_VSCROLL:
 		binEdit.OnVScroll(hWnd, wParam);
 		break;

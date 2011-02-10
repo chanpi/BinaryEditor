@@ -25,6 +25,10 @@ BinEdit::BinEdit(void)
 	_tcscpy_s(fInfo.fname, _T(""));
 	fInfo.cell_H = CELL_H;
 	fInfo.cell_W = CELL_W;
+
+	fInfo.cursorX = 0;
+	fInfo.cursorY = 0;
+	fInfo.cursorEnabled = TRUE;
 }
 
 BinEdit::~BinEdit(void)
@@ -60,9 +64,6 @@ int BinEdit::OpenFile(HWND hWnd, LPCTSTR fname) {
 	RECT rect;
 	GetClientRect(hWnd, &rect);
 	OnSize(hWnd, (WORD)rect.right, (WORD)rect.bottom);
-
-	//fInfo.startLine = 0;
-	//fInfo.maxLine = (fInfo.hfile.getSize() + 0x10 - 1) / 0x10;
 
 	InvalidateRect(hWnd, NULL, TRUE);
 	return 0;
@@ -255,6 +256,22 @@ int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
 				WriteString(hdc, out, ASCII_OFFSET_X + i, ypos, w, h);
 			}
 		}
+
+		// カーソルの描画（反転するだけ）
+		if (fInfo.cursorEnabled) {
+			ReverseColor(hdc);
+			int data = fInfo.hfile.get((fInfo.startLine + fInfo.cursorY) * 0x10 + fInfo.cursorX / 2);
+			int posX = fInfo.cursorX + fInfo.cursorX/2 + DUMP_OFFSET_X;
+
+			if ((fInfo.cursorX & 0x01) == 0) {
+				data >>= 4;	// 上位4バイト
+			} else {
+				data &= 0x0F;
+			}
+			_stprintf_s(out, _T("%X"), data);
+			WriteString(hdc, out, posX, fInfo.cursorY + DUMP_OFFSET_Y, w, h);
+			ReverseColor(hdc);
+		}
 	} else {
 		// ファイルを開いていない場合は、クライアント領域全体を背景色で塗りつぶす
 		FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW+1));
@@ -267,30 +284,14 @@ int BinEdit::OnKeyDown(HWND hWnd, UINT vKey) {
 		return 0;
 	}
 
+	EnableCursor(hWnd, FALSE);
 	switch (vKey) {
-	case VK_DOWN:
-		OnVScroll(hWnd, SB_LINEDOWN);
-		break;
-
-	case VK_UP:
-		OnVScroll(hWnd, SB_LINEUP);
-		break;
-
 	case VK_PRIOR:
 		OnVScroll(hWnd, SB_PAGEUP);
 		break;
 
 	case VK_NEXT:
 		OnVScroll(hWnd, SB_PAGEDOWN);
-		break;
-
-
-	case VK_LEFT:
-		OnHScroll(hWnd, SB_LINELEFT);
-		break;
-
-	case VK_RIGHT:
-		OnHScroll(hWnd, SB_LINERIGHT);
 		break;
 
 	case VK_HOME:
@@ -300,70 +301,80 @@ int BinEdit::OnKeyDown(HWND hWnd, UINT vKey) {
 	case VK_END:
 		OnHScroll(hWnd, SB_PAGERIGHT);
 		break;
-	}
-	/*
-	// クライアント領域内に描画できる行数を計算
-	RECT rect;
-	GetClientRect(hWnd, &rect);
-	int linesPerPage = rect.bottom/fInfo.cell_H - DUMP_OFFSET_Y;
-	if (linesPerPage <= 0) {
-		linesPerPage = 1;
-	}
 
-	// 入力されたキーによって表示開始行を更新する
-	// startLineは符合なし整数（ULONGLONG）なのでラップアラウンドしないように注意
-	ULONGLONG startLine = fInfo.startLine;
 
-	switch (vKey) {
 	case VK_DOWN:
-		if (startLine < fInfo.maxLine - 1) {
-			startLine++;
+		if (fInfo.cursorY < fInfo.linesPerPage - 1) {
+			fInfo.cursorY++;
+			AdjustCursor();
+		} else {
+			OnVScroll(hWnd, SB_LINEDOWN);
 		}
 		break;
 
 	case VK_UP:
-		if (startLine > 0) {
-			startLine--;			
-		}
-		break;
-
-	case VK_PRIOR:
-		if (startLine >= linesPerPage) {
-			startLine -= linesPerPage;
+		if (fInfo.cursorY > 0) {
+			fInfo.cursorY--;
 		} else {
-			startLine = 0;
+			OnVScroll(hWnd, SB_LINEUP);
 		}
 		break;
 
-	case VK_NEXT:
-		if (startLine + linesPerPage < fInfo.maxLine) {
-			startLine += linesPerPage;
+	case VK_LEFT:
+		if (fInfo.cursorX > 0) {
+			fInfo.cursorX--;
 		} else {
-			startLine = fInfo.maxLine - 1;
+			if (fInfo.cursorY > 0) {
+				fInfo.cursorY--;
+				fInfo.cursorX = 0x10 * 2 - 1;
+			} else if (fInfo.startLine > 0) {
+				fInfo.cursorX = 0x10 * 2 - 1;
+				fInfo.cursorY = 0;
+				ScrollUpDown(hWnd, -1);
+			}
 		}
 		break;
-	}
 
-	if (startLine != fInfo.startLine) {
-		// 表示開始位置が変わる場合、ビューの切り替えが必要で
-		// かつビューのデータに変更があるかどうかチェック
-		ULONGLONG firstPos = startLine * 0x10;
-		ULONGLONG lastPos = (startLine + linesPerPage) * 0x10 - 1;
-
-		if (lastPos >= fInfo.hfile.getSize()) {
-			lastPos = fInfo.hfile.getSize() - 1;
+	case VK_RIGHT:
+		fInfo.cursorX++;
+		if (fInfo.cursorX >= 0x10 * 2) {
+			if (fInfo.cursorY < fInfo.linesPerPage - 1) {
+				fInfo.cursorY++;
+				fInfo.cursorX = 0;
+			} else if (fInfo.startLine < fInfo.maxLine - fInfo.linesPerPage) {
+				fInfo.cursorX = 0;
+				ScrollUpDown(hWnd, 1);
+			}
 		}
-		if (fInfo.hfile.get(firstPos) == ERR_DIRTY_VIEW ||
-			fInfo.hfile.get(lastPos) == ERR_DIRTY_VIEW) {
-				if (QuerySaveChanges(hWnd) != 0) {
-					return -1;
+		AdjustCursor();
+		break;
+
+	default:
+		{
+			int nibble = -1;
+			if ('0' <= vKey && vKey <= '9') {
+				nibble = vKey - '0';
+			} else if ('A' <= vKey && vKey <= 'F') {
+				nibble = vKey - 'A' + 10;
+			}
+
+			if (nibble >= 0) {
+				ULONGLONG index = (fInfo.startLine + fInfo.cursorY) * 0x10 + fInfo.cursorX / 2;
+				int data = fInfo.hfile.get(index);
+				if ((fInfo.cursorX & 0x01) == 0) {	// 偶数番目、つまりカーソルが上位バイトの位置にあるとき
+					data = (data & 0x0F) | (nibble << 4);
+				} else {
+					data = (data & 0xF0) | nibble;
 				}
-		}
+				fInfo.hfile.set(index, data);
 
-		fInfo.startLine = startLine;
-		InvalidateRect(hWnd, NULL, TRUE);
+				// 連続入力可能なように、カーソルを右に１つ移動
+				OnKeyDown(hWnd, VK_RIGHT);
+			}
+		}
+		break;
 	}
-	*/
+	EnableCursor(hWnd, TRUE);
 	return 0;
 }
 
@@ -419,6 +430,8 @@ int BinEdit::OnHScroll(HWND hWnd, WORD type) {
 	si.fMask = SIF_ALL;
 	GetScrollInfo(hWnd, SB_HORZ, &si);
 
+	int orgPos = si.nPos;
+
 	switch (type) {
 	case SB_LINELEFT:
 		si.nPos -= fInfo.cell_W;
@@ -455,7 +468,12 @@ int BinEdit::OnHScroll(HWND hWnd, WORD type) {
 
 	si.fMask = SIF_POS;
 	SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
-	InvalidateRect(hWnd, NULL, TRUE);
+
+	RECT rect;
+	GetClientRect(hWnd, &rect);
+	ScrollWindowEx(hWnd, orgPos - si.nPos, 0, &rect, &rect, NULL, NULL, SW_ERASE | SW_INVALIDATE);
+
+	//InvalidateRect(hWnd, NULL, TRUE);
 	return 0;
 }
 
@@ -540,7 +558,7 @@ int BinEdit::QuerySaveChanges(HWND hWnd) {
 	return rc;
 }
 
-void BinEdit::ScrollUpDown(HWND hWnd, int lines) {
+void BinEdit::ScrollUpDown(HWND hWnd, int lines, BOOL scrollCursor) {
 	LONGLONG startLine = fInfo.startLine + lines;
 	LONGLONG maxStartLine = fInfo.maxLine - fInfo.linesPerPage;
 	if (maxStartLine < 0) {
@@ -553,7 +571,25 @@ void BinEdit::ScrollUpDown(HWND hWnd, int lines) {
 		startLine = 0;
 	}
 
+	if (scrollCursor) {
+		fInfo.cursorY += lines;
+	}
+	AdjustCursor();
+
 	if (startLine != fInfo.startLine) {
+		ULONGLONG firstPos = fInfo.startLine * 0x10;
+		ULONGLONG lastPos = (fInfo.startLine + fInfo.linesPerPage) * 0x10 - 1;
+		if (lastPos >= fInfo.hfile.getSize()) {
+			lastPos = fInfo.hfile.getSize() - 1;
+		}
+		if (fInfo.hfile.get(firstPos) == ERR_DIRTY_VIEW
+			|| fInfo.hfile.get(lastPos) == ERR_DIRTY_VIEW) {
+				if (QuerySaveChanges(hWnd) != 0) {
+					return;
+				}
+		}
+
+
 		// ダンプコードを再描画
 		fInfo.startLine = startLine;
 		InvalidateRect(hWnd, NULL, FALSE);
@@ -568,4 +604,41 @@ void BinEdit::ScrollUpDown(HWND hWnd, int lines) {
 }
 
 void BinEdit::ReverseColor(HDC hdc) {
+	COLORREF tmp = GetBkColor(hdc);
+	SetBkColor(hdc, GetTextColor(hdc));
+	SetTextColor(hdc, tmp);
+}
+
+// カーソルを有効範囲内になるように修正する
+void BinEdit::AdjustCursor(void) {
+	if (fInfo.cursorY < 0) {
+		fInfo.cursorY = 0;
+	} else if (fInfo.cursorY >= fInfo.linesPerPage) {
+		fInfo.cursorY = fInfo.linesPerPage;
+	}
+	if (fInfo.startLine + fInfo.cursorY >= fInfo.maxLine) {
+		fInfo.cursorY = (fInfo.maxLine - 1) - fInfo.startLine;
+	}
+
+	if (fInfo.cursorX < 0) {
+		fInfo.cursorX = 0;
+	} else if (0x10 * 2 - 1 <= fInfo.cursorX) {
+		fInfo.cursorX = 0x10 * 2 - 1;
+	}
+	if (fInfo.startLine + fInfo.cursorY == fInfo.maxLine - 1
+		&& fInfo.cursorX > fInfo.lastXatLastLine * 2 - 1) {
+			fInfo.cursorX = fInfo.lastXatLastLine * 2 - 1;
+	}
+}
+
+void BinEdit::EnableCursor(HWND hWnd, BOOL enable) {
+	fInfo.cursorEnabled = enable;
+
+	RECT rect;
+	rect.top = (fInfo.cursorY + DUMP_OFFSET_Y) * fInfo.cell_H;
+	rect.bottom = rect.top + fInfo.cell_H;
+	rect.left = (fInfo.cursorX + fInfo.cursorX / 2 + DUMP_OFFSET_X) * fInfo.cell_W;
+	rect.right = rect.left + fInfo.cell_W;
+	InvalidateRect(hWnd, &rect, FALSE);
+	UpdateWindow(hWnd);
 }

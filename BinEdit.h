@@ -15,6 +15,9 @@ typedef struct {
 	int cell_W;
 	int requiredWidth;
 	int ofsX;
+	int cursorX;
+	int cursorY;
+	BOOL cursorEnabled;
 } FileInfo;
 
 class BinEdit
@@ -41,6 +44,8 @@ private:
 	void UpdateTitle(HWND hWnd);
 	void WriteString(HDC hdc, LPCTSTR str, int x, int y, int width, int height);
 	int QuerySaveChanges(HWND hWnd);
-	void ScrollUpDown(HWND hWnd, int lines);
+	void ScrollUpDown(HWND hWnd, int lines, BOOL scrollCursor = FALSE);
 	void ReverseColor(HDC hdc);
+	void AdjustCursor(void);
+	void EnableCursor(HWND hWnd, BOOL enable);
 };
