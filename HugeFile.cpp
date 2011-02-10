@@ -1,6 +1,5 @@
 #include "HugeFile.h"
 
-
 HugeFile::HugeFile(void)
 {
 	initialize();
