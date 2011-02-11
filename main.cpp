@@ -9,6 +9,8 @@ HINSTANCE hInst;
 TCHAR szTitle[MAX_LOADSTRING];			// タイトルバーのテキスト
 TCHAR szWindowClass[MAX_LOADSTRING];	// メインウィンドウクラス
 
+PRINTDLGEX printDlgEx;
+
 static BinEdit binEdit;
 
 static ATOM MyRegisterClass(HINSTANCE hInstance);
@@ -112,6 +114,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 
 		case ID_SAVEAS:
 			binEdit.OnSaveAs(hWnd);
+			break;
+
+		case ID_PRINT:
+			binEdit.OnPrint(hWnd);
 			break;
 
 		case ID_QUIT:

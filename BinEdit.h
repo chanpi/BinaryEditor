@@ -13,15 +13,12 @@ typedef struct {
 	int linesPerPage;
 	int cell_H;
 	int cell_W;
-	int requiredWidth;
-	int ofsX;
 	int cursorX;
 	int cursorY;
 	BOOL cursorEnabled;
 	HFONT hMainFont;
 	LOGFONT lf;	// メインで使う論理フォントに対するLOGFONT構造体
 				// フォントダイアログ、現在のフォントの設定として初期化に使う
-
 } FileInfo;
 
 class BinEdit
@@ -35,6 +32,7 @@ public:
 	int OnOpen(HWND hWnd);
 	int OnSave(HWND hWnd);
 	int OnSaveAs(HWND hWnd);
+	int OnPrint(HWND hWnd);
 	int OnExit(HWND hWnd);
 	int OnFont(HWND hWnd);
 
@@ -45,11 +43,10 @@ public:
 
 	int OnSize(HWND hWnd, WORD width, WORD height);
 
-
 private:
 	FileInfo fInfo;		// タブなどを使って複数のファイルを管理したい場合は配列などでもつ
 	void UpdateTitle(HWND hWnd);
-	void WriteString(HDC hdc, LPCTSTR str, int x, int y, int width, int height);
+	void WriteString(HDC hdc, LPCTSTR str, int x, int y, int width, int height, int ofsX);
 	int QuerySaveChanges(HWND hWnd);
 	void ScrollUpDown(HWND hWnd, int lines, BOOL scrollCursor = FALSE);
 	void ReverseColor(HDC hdc);
@@ -58,5 +55,6 @@ private:
 
 	void CreateMainFont(HWND hWnd);
 	int CalcCellWidth(HDC hdc);
+	void GetCellRect(RECT* pRect, int x, int y);
 	void SetCellSize(int width, int height);
 };

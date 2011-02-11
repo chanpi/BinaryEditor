@@ -107,6 +107,7 @@ int HugeFile::save(void) {
 				pScan = (BYTE*)mbi.BaseAddress + mbi.RegionSize;
 			}
 		}
+		resetDirty();
 		// 保存が終わったので、ビューの読み込み直しを行う
 		changeView(m_viewOffset);
 	}
@@ -204,7 +205,7 @@ int HugeFile::changeView(ULONGLONG index) {
 
 	// 新しい位置でビューをマップ
 	// 解除したばかりのビューと同じサイズで行けるはず
-	m_pView = (BYTE*)MapViewOfFile(m_mappedFile, FILE_MAP_COPY, (DWORD)(newOffset >> 32), (DWORD)(newOffset & 0xffffffff), m_viewSize);
+	m_pView = (BYTE*)MapViewOfFile(m_mappedFile, FILE_MAP_COPY, (DWORD)(newOffset >> 32), (DWORD)(newOffset & 0xFFFFFFFF), m_viewSize);
 
 	m_dirty = FALSE;
 	return (m_pView != NULL) ? SUCCESS : ERR_CANNOT_MAP_VIEW;
@@ -251,6 +252,7 @@ int HugeFile::mapMaxView(void) {
 
 	} else {
 		m_viewSize = (SIZE_T)m_fileSize;
+		m_viewUnit = m_viewSize;
 	}
 
 	m_pView = ptr;

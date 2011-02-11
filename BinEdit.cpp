@@ -7,10 +7,12 @@
 #define CELL_W			9
 #define DUMP_OFFSET_X	20
 #define DUMP_OFFSET_Y	2
-#define ASCII_OFFSET_X	70
+#define ASCII_OFFSET_X	(DUMP_OFFSET_X+50)
+#define MAX_COLUMN		(ASCII_OFFSET_X+16+1)
 
 extern HINSTANCE hInst;
 extern TCHAR szTitle[MAX_LOADSTRING];
+extern PRINTDLGEX printDlgEx;
 
 BinEdit::BinEdit(void)
 {
@@ -19,8 +21,6 @@ BinEdit::BinEdit(void)
 	fInfo.startLine = 0;
 
 	fInfo.lastXatLastLine = 0;
-	fInfo.requiredWidth = CELL_W * 85;
-	fInfo.ofsX = 0;
 
 	_tcscpy_s(fInfo.fname, _T(""));
 	fInfo.cell_H = CELL_H;
@@ -39,6 +39,7 @@ BinEdit::~BinEdit(void)
 
 
 int BinEdit::OnCreate(HWND hWnd) {
+	ZeroMemory(&printDlgEx, sizeof(printDlgEx));
 	CreateMainFont(hWnd);
 	return 0;
 }
@@ -100,7 +101,7 @@ int BinEdit::OnOpen(HWND hWnd) {
 	return OpenFile(hWnd, fname);
 }
 
-int BinEdit::OnSave(HWND hWnd) {
+int BinEdit::OnSave(HWND /*hWnd*/) {
 	fInfo.hfile.save();
 	return 0;
 }
@@ -144,7 +145,7 @@ int BinEdit::OnSaveAs(HWND hWnd) {
 		seekpos.QuadPart = baseIndex;
 		SetFilePointerEx(hFile, seekpos, NULL, FILE_BEGIN);
 		for (ULONGLONG pos = baseIndex; pos < fileSize; pos++) {
-			buf[bufIndex++] = fInfo.hfile.get(pos);
+			buf[bufIndex++] = (BYTE)fInfo.hfile.get(pos);
 			if (bufIndex >= WRITEBUF_SIZE) {
 				WriteFile(hFile, buf, bufIndex, &written, NULL);
 				bufIndex = 0;
@@ -164,7 +165,7 @@ int BinEdit::OnSaveAs(HWND hWnd) {
 	}
 
 	for (ULONGLONG pos = 0; pos < fileSize; pos++) {
-		buf[bufIndex++] = fInfo.hfile.get(pos);
+		buf[bufIndex++] = (BYTE)fInfo.hfile.get(pos);
 		if (bufIndex >= WRITEBUF_SIZE) {
 			WriteFile(hFile, buf, bufIndex, &written, NULL);
 			bufIndex = 0;
@@ -176,6 +177,65 @@ int BinEdit::OnSaveAs(HWND hWnd) {
 	CloseHandle(hFile);
 
 	return OpenFile(hWnd, fname);
+}
+
+int BinEdit::OnPrint(HWND hWnd) {
+	if (!fInfo.hfile.isLoaded()) {
+		return 0;
+	}
+
+	// PRINTDLGEX構造体の初期化
+	if (printDlgEx.hwndOwner == NULL) {
+		// 初回のみFlagsを初期化
+		printDlgEx.Flags = PD_RETURNDC | PD_CURRENTPAGE
+			| PD_USEDEVMODECOPIESANDCOLLATE
+			| PD_NOPAGENUMS | PD_NOSELECTION;
+	}
+	printDlgEx.lStructSize = sizeof(printDlgEx);
+	printDlgEx.hwndOwner = hWnd;
+	printDlgEx.nStartPage = START_PAGE_GENERAL;
+	printDlgEx.dwResultAction = 0;
+
+	// 印刷ダイアログの呼び出し
+	if (PrintDlgEx(&printDlgEx) == S_OK) {
+		if (printDlgEx.dwResultAction == PD_RESULT_PRINT) {
+
+			// 印刷ジョブの名前を設定
+			TCHAR docName[BUFFER_SIZE] = {0};
+			GetWindowText(hWnd, docName, sizeof(docName)/sizeof(docName[0]));
+			DOCINFO di;
+			ZeroMemory(&di, sizeof(di));
+			di.cbSize = sizeof(di);
+			di.lpszDocName = docName;
+
+			// ウィンドウのDCの縦方向の解像度（DPI）を取得
+			HDC hdc = GetDC(hWnd);
+			int winExt = GetDeviceCaps(hdc, LOGPIXELSY);
+			ReleaseDC(hWnd, hdc);
+
+			// プリンタDCの縦方向の解像度（DPI）を取得
+			int viewExt = GetDeviceCaps(printDlgEx.hDC, LOGPIXELSY);
+
+			// ウィンドウの1インチのドット数がプリンタの1インチのドット数に対応するようにマッピングモードを設定
+			SetMapMode(printDlgEx.hDC, MM_ISOTROPIC);
+			SetWindowExtEx(printDlgEx.hDC, winExt, winExt, NULL);
+			SetViewportExtEx(printDlgEx.hDC, viewExt, viewExt, NULL);
+
+			// 印刷開始
+			if (StartDoc(printDlgEx.hDC, &di) > 0) {
+				if (StartPage(printDlgEx.hDC) > 0) {
+					// 共通描画ルーチンを呼び出し
+					OnPaint(hWnd, printDlgEx.hDC);
+					if (EndPage(printDlgEx.hDC) > 0) {
+						EndDoc(printDlgEx.hDC);
+					}
+				}
+
+				DeleteDC(printDlgEx.hDC);
+			}
+		}
+	}
+	return 0;
 }
 
 int BinEdit::OnExit(HWND hWnd) {
@@ -257,52 +317,76 @@ int BinEdit::OnFont(HWND hWnd) {
 
 int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
 	HFONT hOldFont;
-	RECT rect;
-	GetClientRect(hWnd, &rect);
+
+	// 描画先がディスプレイDCかどうか
+	BOOL isDisplay = (GetDeviceCaps(hdc, TECHNOLOGY) == DT_RASDISPLAY);
 
 	if (fInfo.hfile.isLoaded()) {
+		// テキスト描画時、文字の背景を透明にする
+		// セルからはみ出して描画されている部分を消さないために必要
+		int prevBkMode = SetBkMode(hdc, TRANSPARENT);
+
 		// メインフォントが正しく作成されていれば設定
 		if (fInfo.hMainFont != NULL) {
 			hOldFont = (HFONT)SelectObject(hdc, fInfo.hMainFont);
 		}
 
-		ULONGLONG fileSize = fInfo.hfile.getSize();
-
-		int linesPerPage = rect.bottom/fInfo.cell_H - DUMP_OFFSET_Y;
-
 		TCHAR out[BUFFER_SIZE];
 
-		// 水平スクロールバー
-		SCROLLINFO si;
-		si.cbSize = sizeof(si);
-		si.fMask = SIF_POS;
-		GetScrollInfo(hWnd, SB_HORZ, &si);
-		fInfo.ofsX = si.nPos;
+		// 水平スクロール位置の設定（印刷時は0）
+		int ofsX = 0;		// FileInfoメンバのofsXは廃止
+		if (isDisplay) {
+			SCROLLINFO si;
+			si.cbSize = sizeof(si);
+			si.fMask = SIF_POS;
+			GetScrollInfo(hWnd, SB_HORZ, &si);
+			ofsX = si.nPos;
+		}
 
-		int h = fInfo.cell_H;
-		int w = fInfo.cell_W;
+		TEXTMETRIC tm;
+		GetTextMetrics(hdc, &tm);
+		int h = tm.tmHeight;
+		int w = CalcCellWidth(hdc);
+
 
 		// 下位4ビットのメモリを描画
 		for (int i = 0; i < 16; i++) {
 			_stprintf_s(out, _T("%02X "), i);
-			WriteString(hdc, out, DUMP_OFFSET_X + i*3, 0, w, h);
+			WriteString(hdc, out, DUMP_OFFSET_X + i*3, 0, w, h, ofsX);
 		}
 
 		// 区切り線の描画
-		int linePosX = w * DUMP_OFFSET_X - fInfo.ofsX;
+		int linePosX = w * DUMP_OFFSET_X - ofsX;
 		int linePosY = h * DUMP_OFFSET_Y - 4;
 		MoveToEx(hdc, linePosX, linePosY, NULL);
-		linePosX += w * (0x10 * 3 -1);
+		linePosX += w * (0x10 * 3 - 1);
 		LineTo(hdc, linePosX, linePosY);
+
+		// 印刷時のみ、描画する行数を計算
+		int linesPerPage = fInfo.linesPerPage;
+		//int linesPerPage = rect.bottom/fInfo.cell_H - DUMP_OFFSET_Y;
+		if (!isDisplay) {
+			// VERTRESで、印刷可能範囲の高さを取得
+			POINT pt[1];
+			pt[0].x = 0;
+			pt[0].y = GetDeviceCaps(hdc, VERTRES);
+			DPtoLP(hdc, pt, 1);		// デバイス座標から論理座標へ変換
+			linesPerPage = pt[0].y / h - DUMP_OFFSET_Y;
+		}
 
 		// g_startLineの行から、１行１６バイトずつ順に描画する
 		BOOL cont = TRUE;
 		ULONGLONG pos = fInfo.startLine * 0x10;
 		for (int line = 0; line < linesPerPage && cont; line++) {
+			for (int i = 0; i < MAX_COLUMN; i++) {
+				out[i] = _T(' ');
+			}
+			out[MAX_COLUMN] = _T('\0');
+			TCHAR buf[100];
 			// アドレスの表示
-			_stprintf_s(out, _T("%016X: "), pos);
+			_stprintf_s(buf, _T("%016X: "), pos);
+			_tcsncpy(out, buf, 18);
 			int ypos = line + DUMP_OFFSET_Y;
-			WriteString(hdc, out, 1, ypos, w, h);
 
 			// ダンプデータ
 			for (int i = 0; i < 16; i++, pos++) {
@@ -312,32 +396,31 @@ int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
 						cont = FALSE;
 						break;
 					}
-					_tcscpy_s(out, _T("?? "));
+					//_tcsncpy_s(out + DUMP_OFFSET_X + i*3, sizeof(out)/sizeof(out[0]) - DUMP_OFFSET_X - i*3, _T("?? "), 3);
+					_tcsncpy(out + DUMP_OFFSET_X + i*3, _T("?? "), 3);
 
 				} else {
-					_stprintf_s(out, _T("%02X "), data);
+					_stprintf_s(buf, _T("%02X "), data);
+					//_tcsncpy_s(out + DUMP_OFFSET_X + i*3, sizeof(out)/sizeof(out[0]) - DUMP_OFFSET_X - i*3, buf, 3);
+					_tcsncpy(out + DUMP_OFFSET_X + i*3, buf, 3);
 				}
-				WriteString(hdc, out, DUMP_OFFSET_X + i*3, ypos, w, h);
 
 				// 対応するASCII文字の描画
-				TCHAR ch = data;
+				TCHAR ch = (TCHAR)data;
 				if (_istprint(ch)) {
-					out[0] = ch;
+					out[ASCII_OFFSET_X + i] = ch;
 				} else if (data >= 0) {
-					out[0] = _T('.');
+					out[ASCII_OFFSET_X + i] = _T('.');
 				} else {
-					out[0] = _T('?');
+					out[ASCII_OFFSET_X + i] = _T('?');
 				}
-				out[1] = _T('\0');
-				WriteString(hdc, out, ASCII_OFFSET_X + i, ypos, w, h);
 			}
+			WriteString(hdc, out, 0, ypos, w, h, ofsX);
 		}
 
-		// カーソルの描画（反転するだけ）
-		if (fInfo.cursorEnabled) {
-			ReverseColor(hdc);
+		// ディスプレイ時のみカーソルの描画（反転するだけ）
+		if (isDisplay && fInfo.cursorEnabled) {
 			int data = fInfo.hfile.get((fInfo.startLine + fInfo.cursorY) * 0x10 + fInfo.cursorX / 2);
-			int posX = fInfo.cursorX + fInfo.cursorX/2 + DUMP_OFFSET_X;
 
 			if ((fInfo.cursorX & 0x01) == 0) {
 				data >>= 4;	// 上位4バイト
@@ -345,10 +428,18 @@ int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
 				data &= 0x0F;
 			}
 			_stprintf_s(out, _T("%X"), data);
-			WriteString(hdc, out, posX, fInfo.cursorY + DUMP_OFFSET_Y, w, h);
+
+			// カーソル位置のセルの矩形を取得して、黒く塗りつぶす
+			RECT rect;
+			GetCellRect(&rect, fInfo.cursorX, fInfo.cursorY);
+			FillRect(hdc, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+
+			ReverseColor(hdc);
+			int posX = fInfo.cursorX + fInfo.cursorX/2 + DUMP_OFFSET_X;
+			WriteString(hdc, out, posX, fInfo.cursorY + DUMP_OFFSET_Y, w, h, ofsX);
 			ReverseColor(hdc);
 		}
-
+		SetBkMode(hdc, prevBkMode);
 		
 		if (hOldFont != NULL) {
 			SelectObject(hdc, hOldFont);
@@ -356,6 +447,8 @@ int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
 
 	} else {
 		// ファイルを開いていない場合は、クライアント領域全体を背景色で塗りつぶす
+		RECT rect;
+		GetClientRect(hWnd, &rect);
 		FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW+1));
 	}
 	return 0;
@@ -467,7 +560,7 @@ int BinEdit::OnVScroll(HWND hWnd, WORD type) {
 
 	RECT rect;
 	GetClientRect(hWnd, &rect);
-	fInfo.linesPerPage = rect.bottom / fInfo.cell_H - DUMP_OFFSET_Y;
+	//fInfo.linesPerPage = rect.bottom / fInfo.cell_H - DUMP_OFFSET_Y;
 
 	// スクロール後の表示開始行を計算する
 	switch (type) {
@@ -576,7 +669,7 @@ int BinEdit::OnSize(HWND hWnd, WORD width, WORD height) {
 	si.fMask = SIF_PAGE | SIF_RANGE;
 	si.nPage = width;
 	si.nMin = 0;
-	si.nMax = fInfo.requiredWidth;
+	si.nMax = fInfo.cell_W * MAX_COLUMN;
 	SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
 	return 0;
 }
@@ -595,7 +688,7 @@ void BinEdit::UpdateTitle(HWND hWnd) {
 	SetWindowText(hWnd, title);
 }
 
-void BinEdit::WriteString(HDC hdc, LPCTSTR str, int x, int y, int width, int height) {
+void BinEdit::WriteString(HDC hdc, LPCTSTR str, int x, int y, int width, int height, int ofsX) {
 	if (y == 0) {
 		y = height / 2;	// １行目だけ少し下げるように調整
 	} else {
@@ -604,16 +697,22 @@ void BinEdit::WriteString(HDC hdc, LPCTSTR str, int x, int y, int width, int hei
 
 	RECT rect;
 	int len = _tcslen(str);
-	rect.left = x * width - fInfo.ofsX;
-	rect.right = rect.left + len * width;
-	rect.top = y;
-	rect.bottom = y + height;
-	FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW+1));
+	if (len > 1) {
+		rect.left = x * width - ofsX;
+		rect.right = rect.left + len * width;
+		rect.top = y;
+		rect.bottom = y + height;
+		FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW+1));
+	}
 
+	// 文字がセルの中央（水平方向）にくるように、アラインメントを指定
+	int prevAlign = SetTextAlign(hdc, TA_TOP | TA_CENTER);
+	int hw = width / 2;	// 基準点が中央になるため、描画位置を調整
 	while (*str != _T('\0')) {
-		TextOut(hdc, x * width -fInfo.ofsX, y, str++, 1);
+		TextOut(hdc, x * width + hw - ofsX, y, str++, 1);
 		x++;
 	}
+	SetTextAlign(hdc, prevAlign);
 }
 
 int BinEdit::QuerySaveChanges(HWND hWnd) {
@@ -641,7 +740,7 @@ int BinEdit::QuerySaveChanges(HWND hWnd) {
 }
 
 void BinEdit::ScrollUpDown(HWND hWnd, int lines, BOOL scrollCursor) {
-	LONGLONG startLine = fInfo.startLine + lines;
+	LONGLONG startLine = fInfo.startLine + lines;					// マイナスを考慮するので符号付き
 	LONGLONG maxStartLine = fInfo.maxLine - fInfo.linesPerPage;
 	if (maxStartLine < 0) {
 		maxStartLine = 0;
@@ -739,10 +838,10 @@ int BinEdit::CalcCellWidth(HDC hdc) {
 
 	if (tm.tmPitchAndFamily & TMPF_TRUETYPE) {
 		// TrueTypeフォント
-		ABC abc[36];
+		ABC abc[16];
 		GetCharABCWidths(hdc, '0', '9', abc);
-		GetCharABCWidths(hdc, 'A', 'Z', &abc[10]);
-		for (int i = 0; i < 36; i++) {
+		GetCharABCWidths(hdc, 'A', 'F', &abc[10]);
+		for (int i = 0; i < 16; i++) {
 			int tmpW = abc[i].abcB;
 			if (tmpW > maxWidth) {
 				maxWidth = tmpW;
@@ -750,10 +849,10 @@ int BinEdit::CalcCellWidth(HDC hdc) {
 		}
 	} else {
 		// ラスター&ベクターフォントの場合
-		int wid[36];
+		int wid[16];
 		GetCharWidth(hdc, '0', '9', wid);
-		GetCharWidth(hdc, 'A', 'Z', &wid[10]);
-		for (int i = 0; i < 36; i++) {
+		GetCharWidth(hdc, 'A', 'F', &wid[10]);
+		for (int i = 0; i < 16; i++) {
 			if (wid[i] > maxWidth) {
 				maxWidth = wid[i];
 			}
@@ -782,6 +881,17 @@ void BinEdit::CreateMainFont(HWND hWnd) {
 		SelectObject(hdc, hOrigFont);
 	}
 	ReleaseDC(hWnd, hdc);
+}
+
+void BinEdit::GetCellRect(RECT* pRect, int x, int y) {
+	if (pRect == NULL) {
+		return;
+	}
+
+	pRect->top = (y + DUMP_OFFSET_Y) * fInfo.cell_H;
+	pRect->bottom = pRect->top + fInfo.cell_H;
+	pRect->left = (x + x/2 + DUMP_OFFSET_X) * fInfo.cell_W;
+	pRect->right = pRect->left + fInfo.cell_W;
 }
 
 void BinEdit::SetCellSize(int width, int height) {
