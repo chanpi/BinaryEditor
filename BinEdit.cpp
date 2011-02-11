@@ -7,7 +7,7 @@
 #define CELL_W			9
 #define DUMP_OFFSET_X	20
 #define DUMP_OFFSET_Y	2
-#define ASCII_OFFSET_X	68
+#define ASCII_OFFSET_X	70
 
 extern HINSTANCE hInst;
 extern TCHAR szTitle[MAX_LOADSTRING];
@@ -29,10 +29,18 @@ BinEdit::BinEdit(void)
 	fInfo.cursorX = 0;
 	fInfo.cursorY = 0;
 	fInfo.cursorEnabled = TRUE;
+
+	fInfo.hMainFont = NULL;
 }
 
 BinEdit::~BinEdit(void)
 {
+}
+
+
+int BinEdit::OnCreate(HWND hWnd) {
+	CreateMainFont(hWnd);
+	return 0;
 }
 
 int BinEdit::OpenFile(HWND hWnd, LPCTSTR fname) {
@@ -48,17 +56,23 @@ int BinEdit::OpenFile(HWND hWnd, LPCTSTR fname) {
 	_tcscpy_s(fInfo.fname, fname);
 	UpdateTitle(hWnd);
 
+	// カーソルを初期位置へ戻す
+	fInfo.cursorX = fInfo.cursorY = 0;
+
 	// 垂直方向のスクロールバー設定
 	fInfo.startLine = 0;
 	fInfo.maxLine = (fInfo.hfile.getSize() + 0x10 -1) / 0x10;
 	fInfo.lastXatLastLine = (int)(fInfo.hfile.getSize() % 0x10);
+	if (!fInfo.lastXatLastLine) {
+		fInfo.lastXatLastLine = 0x10;
+	}
 
 	SCROLLINFO si;
 	si.cbSize = sizeof(si);
 	si.fMask = SIF_POS | SIF_RANGE;
 	si.nPos = 0;
 	si.nMin = 1;
-	si.nMax = fInfo.maxLine;
+	si.nMax = (int)fInfo.maxLine;
 	SetScrollInfo(hWnd, SB_VERT, &si, TRUE);
 
 	RECT rect;
@@ -182,14 +196,76 @@ int BinEdit::OnExit(HWND hWnd) {
 			break;
 		}
 	}
+
+	PostQuitMessage(0);
+	DeleteObject(fInfo.hMainFont);
 	return rc;
 }
 
+int BinEdit::OnFont(HWND hWnd) {
+	CHOOSEFONT cf;
+	ZeroMemory(&cf, sizeof(cf));
+	cf.lStructSize = sizeof(cf);
+	cf.hwndOwner = hWnd;
+	cf.lpLogFont = &fInfo.lf;
+	cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT;	
+	// CF_INITTOLOGFONTSTRUCTは指定したLOGFONT構造体でフォントダイアログを初期化するときに指定
+
+	// フォントダイアログを表示
+	if (ChooseFont(&cf)) {
+		// 得られたLOGFONT構造体で、論理フォントを作成
+		HFONT hFont = CreateFontIndirect(&fInfo.lf);
+
+		if (hFont != NULL) {
+
+			// 古い論理フォントを削除
+			if (fInfo.hMainFont != NULL && fInfo.hMainFont != hFont) {
+				DeleteObject(fInfo.hMainFont);
+			}
+			fInfo.hMainFont = hFont;
+
+			// フォントのサイズからセルのサイズを計算
+			HDC hdc;
+			hdc = GetDC(hWnd);
+			HFONT hOldFont = (HFONT)SelectObject(hdc, fInfo.hMainFont);
+
+			TEXTMETRIC tm;
+			GetTextMetrics(hdc, &tm);
+			SetCellSize(CalcCellWidth(hdc), tm.tmHeight);
+
+			SelectObject(hdc, hOldFont);
+			ReleaseDC(hWnd, hdc);
+
+
+			// フォントが変わったのでスクロールバーの設定を更新
+			RECT rect;
+			GetClientRect(hWnd, &rect);
+			OnSize(hWnd, (WORD)rect.right, (WORD)rect.bottom);
+
+			// カーソルがウィンドウ内になるように調整
+			EnableCursor(hWnd, FALSE);
+			AdjustCursor();
+			EnableCursor(hWnd, TRUE);
+
+			InvalidateRect(hWnd, NULL, TRUE);
+		} else {
+			MessageBox(hWnd, _T("フォントの変更に失敗しました。"), szTitle, MB_OK | MB_ICONERROR);
+		}
+	}
+	return 0;
+}
+
 int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
+	HFONT hOldFont;
 	RECT rect;
 	GetClientRect(hWnd, &rect);
 
 	if (fInfo.hfile.isLoaded()) {
+		// メインフォントが正しく作成されていれば設定
+		if (fInfo.hMainFont != NULL) {
+			hOldFont = (HFONT)SelectObject(hdc, fInfo.hMainFont);
+		}
+
 		ULONGLONG fileSize = fInfo.hfile.getSize();
 
 		int linesPerPage = rect.bottom/fInfo.cell_H - DUMP_OFFSET_Y;
@@ -272,6 +348,12 @@ int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
 			WriteString(hdc, out, posX, fInfo.cursorY + DUMP_OFFSET_Y, w, h);
 			ReverseColor(hdc);
 		}
+
+		
+		if (hOldFont != NULL) {
+			SelectObject(hdc, hOldFont);
+		}
+
 	} else {
 		// ファイルを開いていない場合は、クライアント領域全体を背景色で塗りつぶす
 		FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW+1));
@@ -412,7 +494,7 @@ int BinEdit::OnVScroll(HWND hWnd, WORD type) {
 			si.fMask = SIF_TRACKPOS;
 			GetScrollInfo(hWnd, SB_VERT, &si);
 			ULONGLONG startLine = si.nTrackPos - 1;
-			ScrollUpDown(hWnd, (startLine - fInfo.startLine));	// サムもSetScrollInfoで再描画される
+			ScrollUpDown(hWnd, (int)(startLine - fInfo.startLine));	// サムもSetScrollInfoで再描画される
 		}
 		break;
 	}
@@ -473,7 +555,6 @@ int BinEdit::OnHScroll(HWND hWnd, WORD type) {
 	GetClientRect(hWnd, &rect);
 	ScrollWindowEx(hWnd, orgPos - si.nPos, 0, &rect, &rect, NULL, NULL, SW_ERASE | SW_INVALIDATE);
 
-	//InvalidateRect(hWnd, NULL, TRUE);
 	return 0;
 }
 
@@ -499,6 +580,7 @@ int BinEdit::OnSize(HWND hWnd, WORD width, WORD height) {
 	SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
 	return 0;
 }
+
 
 /////////////////////////////////////////////////////////////
 
@@ -592,13 +674,13 @@ void BinEdit::ScrollUpDown(HWND hWnd, int lines, BOOL scrollCursor) {
 
 		// ダンプコードを再描画
 		fInfo.startLine = startLine;
-		InvalidateRect(hWnd, NULL, FALSE);
+		InvalidateRect(hWnd, NULL, startLine == maxStartLine ? TRUE : FALSE);
 
 		// スクロールバーを再描画
 		SCROLLINFO si;
 		si.cbSize = sizeof(si);
 		si.fMask = SIF_POS;
-		si.nPos = fInfo.startLine;
+		si.nPos = (int)fInfo.startLine;
 		SetScrollInfo(hWnd, SB_VERT, &si, TRUE);
 	}
 }
@@ -617,7 +699,7 @@ void BinEdit::AdjustCursor(void) {
 		fInfo.cursorY = fInfo.linesPerPage;
 	}
 	if (fInfo.startLine + fInfo.cursorY >= fInfo.maxLine) {
-		fInfo.cursorY = (fInfo.maxLine - 1) - fInfo.startLine;
+		fInfo.cursorY = (int)((fInfo.maxLine - 1) - fInfo.startLine);
 	}
 
 	if (fInfo.cursorX < 0) {
@@ -626,8 +708,8 @@ void BinEdit::AdjustCursor(void) {
 		fInfo.cursorX = 0x10 * 2 - 1;
 	}
 	if (fInfo.startLine + fInfo.cursorY == fInfo.maxLine - 1
-		&& fInfo.cursorX > fInfo.lastXatLastLine * 2 - 1) {
-			fInfo.cursorX = fInfo.lastXatLastLine * 2 - 1;
+		&& fInfo.cursorX > fInfo.lastXatLastLine * 2 -1) {
+			fInfo.cursorX = fInfo.lastXatLastLine * 2 -1;
 	}
 }
 
@@ -641,4 +723,68 @@ void BinEdit::EnableCursor(HWND hWnd, BOOL enable) {
 	rect.right = rect.left + fInfo.cell_W;
 	InvalidateRect(hWnd, &rect, FALSE);
 	UpdateWindow(hWnd);
+}
+
+// 選択中のフォントに合わせて、セルの幅を計算する
+int BinEdit::CalcCellWidth(HDC hdc) {
+	// 使用する文字の中で最大の幅をセル幅とする
+	// しかし、プロポーショナルフォントの場合は全部の文字で調べると間延びしてしまうので
+	// 16進ダンプに使う文字のみを対象にする
+	int maxWidth = 0;
+
+	// 文字幅の取得は、TrueTypeフォントかそうでないかで異なるため
+	// まずフォントの種類を判別
+	TEXTMETRIC tm;
+	GetTextMetrics(hdc, &tm);
+
+	if (tm.tmPitchAndFamily & TMPF_TRUETYPE) {
+		// TrueTypeフォント
+		ABC abc[36];
+		GetCharABCWidths(hdc, '0', '9', abc);
+		GetCharABCWidths(hdc, 'A', 'Z', &abc[10]);
+		for (int i = 0; i < 36; i++) {
+			int tmpW = abc[i].abcB;
+			if (tmpW > maxWidth) {
+				maxWidth = tmpW;
+			}
+		}
+	} else {
+		// ラスター&ベクターフォントの場合
+		int wid[36];
+		GetCharWidth(hdc, '0', '9', wid);
+		GetCharWidth(hdc, 'A', 'Z', &wid[10]);
+		for (int i = 0; i < 36; i++) {
+			if (wid[i] > maxWidth) {
+				maxWidth = wid[i];
+			}
+		}
+	}
+	return maxWidth;
+}
+
+void BinEdit::CreateMainFont(HWND hWnd) {
+	HDC hdc = GetDC(hWnd);
+	ZeroMemory(&fInfo.lf, sizeof(fInfo.lf));
+
+	// フォントの高さは、リーディング部分を含めない定義で10ポイントとする
+	// 論理フォントの高さの単位は論理単位なので、変換する必要がある
+	fInfo.lf.lfHeight = -MulDiv(10, GetDeviceCaps(hdc, LOGPIXELSY), 72);
+	_tcscpy_s(fInfo.lf.lfFaceName, _T("Times New Roman"));
+	
+	HFONT hFont = CreateFontIndirect(&fInfo.lf);
+	if (hFont != NULL) {
+		fInfo.hMainFont = hFont;
+
+		HFONT hOrigFont = (HFONT)SelectObject(hdc, fInfo.hMainFont);
+		TEXTMETRIC tm;
+		GetTextMetrics(hdc, &tm);
+		SetCellSize(CalcCellWidth(hdc), tm.tmHeight);
+		SelectObject(hdc, hOrigFont);
+	}
+	ReleaseDC(hWnd, hdc);
+}
+
+void BinEdit::SetCellSize(int width, int height) {
+	fInfo.cell_W = width;
+	fInfo.cell_H = height;
 }

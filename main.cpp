@@ -1,5 +1,6 @@
 #include <Windows.h>
 #include <WindowsX.h>
+#include <tchar.h>
 #include "Defs.h"
 #include "BinEdit.h"
 #include "resource.h"
@@ -92,6 +93,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 	HDC hdc;
 
 	switch (umsg) {
+	case WM_CREATE:
+		binEdit.OnCreate(hWnd);
+		break;
+
 	case WM_COMMAND:
 		wmId = LOWORD(wParam);
 		wmEvent = HIWORD(wParam);
@@ -112,6 +117,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 		case ID_QUIT:
 			binEdit.OnExit(hWnd);
 			PostQuitMessage(0);
+			break;
+
+		case ID_FONT:
+			binEdit.OnFont(hWnd);
 			break;
 
 		case ID_HELP_VERSION:
@@ -153,7 +162,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 		break;
 
 	case WM_DESTROY:
-		PostQuitMessage(EXIT_SUCCESS);
+		binEdit.OnExit(hWnd);
 		break;
 		
 	default:
@@ -162,4 +171,3 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 	}
 	return 0;
 }
-
