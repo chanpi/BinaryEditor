@@ -71,10 +71,43 @@ ATOM MyRegisterClass(HINSTANCE hInstance) {
 
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
 	HWND hWnd;
+	int x = CW_USEDEFAULT, y = 0;
+	int w = CW_USEDEFAULT, h = 0;
+	/*
+	HKEY hKey;		// 書きこむレジストリ・キーのハンドル
+	if (RegCreateKeyEx(HKEY_CURRENT_USER, MY_REGKEY, 0, NULL, 0,
+		KEY_ALL_ACCESS, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+
+		LONG rc;
+		DWORD type;		// 値の型を取得（DWORD）を想定
+
+		// x座標読み込み
+		DWORD size = sizeof(DWORD);		// 値のバイト・サイズ
+		rc = RegQueryValueEx(hKey, REGVAL_X, 0, &type, (BYTE*)&x, &size);
+		// y座標読み込み
+		if (rc == ERROR_SUCCESS) {
+			size = sizeof(DWORD);		// 値のバイト・サイズ
+			rc = RegQueryValueEx(hKey, REGVAL_Y, 0, &type, (BYTE*)&y, &size);
+		}
+		if (rc == ERROR_SUCCESS) {
+			size = sizeof(DWORD);		// 値のバイト・サイズ
+			rc = RegQueryValueEx(hKey, REGVAL_W, 0, &type, (BYTE*)&w, &size);
+		}
+		if (rc == ERROR_SUCCESS) {
+			size = sizeof(DWORD);		// 値のバイト・サイズ
+			rc = RegQueryValueEx(hKey, REGVAL_H, 0, &type, (BYTE*)&h, &size);
+		}
+		RegCloseKey(hKey);
+
+		if (rc == ERROR_SUCCESS) {
+			RECT
+		}
+	}
+	*/
 
 	hWnd = CreateWindow(szWindowClass, szTitle,
 		WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL, 
-		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 
+		x, y, w, h, 
 		NULL, NULL, hInstance, NULL);
 
 	if (hWnd == NULL) {
@@ -156,11 +189,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 		break;
 
 	case WM_VSCROLL:
-		binEdit.OnVScroll(hWnd, wParam);
+		binEdit.OnVScroll(hWnd, LOWORD(wParam));
 		break;
 
 	case WM_HSCROLL:
-		binEdit.OnHScroll(hWnd, wParam);
+		binEdit.OnHScroll(hWnd, LOWORD(wParam));
 		break;
 
 	case WM_SIZE:

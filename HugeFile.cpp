@@ -91,16 +91,21 @@ int HugeFile::save(void) {
 				int unitCount = (int)(fileOffset/m_allocUnit);
 				ULONGLONG fileBase = (ULONGLONG)m_allocUnit * unitCount;
 				fileOffset -= fileBase;
+				SIZE_T copySize = min(m_pageSize, m_viewSize);
 
 				// 上で計算した位置に、ファイル書き込み用のビューを別途作成
-				BYTE* pWrite = (BYTE*)MapViewOfFile(m_mappedFile, FILE_WRITE_DATA, (DWORD)(fileBase >> 32), (DWORD)(fileBase & 0xFFFFFFFF), m_allocUnit);
+				BYTE* pWrite = (BYTE*)MapViewOfFile(m_mappedFile, FILE_MAP_WRITE, (DWORD)(fileBase >> 32), (DWORD)(fileBase & 0xFFFFFFFF), copySize);
 				if (pWrite != NULL) {
 					// 編集用のビューから書き込み用のビューへ
 					// 1ページ分データをコピー
-					memcpy(pWrite + fileOffset, pScan, m_pageSize);
+					memcpy(pWrite + fileOffset, pScan, copySize);
 					UnmapViewOfFile(pWrite);	// 書き込みビューを解除
+				} else {
+					TCHAR szBuffer[256];
+					wsprintf(szBuffer, TEXT("%d\n"), GetLastError());
+					OutputDebugString(szBuffer);
 				}
-				pScan += m_pageSize;	// 次のページをチェック
+				pScan += copySize;	// 次のページをチェック
 
 			} else {
 				// 保護属性が変化する次の境界までジャンプ
@@ -127,9 +132,9 @@ int HugeFile::set(ULONGLONG index, int data) {
 	// インデックスが現在のビューに含まれるとき
 	if (m_viewOffset <= index && index < m_viewOffset + m_viewSize) {
 		SIZE_T viewIndex = (SIZE_T)(index - m_viewOffset);	// 現在のビューからのインデックス
-		int prevData = m_pView[index];
+		int prevData = m_pView[viewIndex];
 		if (prevData != data) {
-			m_pView[index] = data;
+			m_pView[viewIndex] = (BYTE)data;
 			m_dirty = TRUE;
 		}
 

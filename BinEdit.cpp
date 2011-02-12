@@ -316,7 +316,7 @@ int BinEdit::OnFont(HWND hWnd) {
 }
 
 int BinEdit::OnPaint(HWND hWnd, HDC hdc) {
-	HFONT hOldFont;
+	HFONT hOldFont = NULL;
 
 	// 描画先がディスプレイDCかどうか
 	BOOL isDisplay = (GetDeviceCaps(hdc, TECHNOLOGY) == DT_RASDISPLAY);
@@ -757,7 +757,7 @@ void BinEdit::ScrollUpDown(HWND hWnd, int lines, BOOL scrollCursor) {
 	}
 	AdjustCursor();
 
-	if (startLine != fInfo.startLine) {
+	if ((ULONGLONG)startLine != fInfo.startLine) {
 		ULONGLONG firstPos = fInfo.startLine * 0x10;
 		ULONGLONG lastPos = (fInfo.startLine + fInfo.linesPerPage) * 0x10 - 1;
 		if (lastPos >= fInfo.hfile.getSize()) {
