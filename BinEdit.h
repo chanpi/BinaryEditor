@@ -41,7 +41,15 @@ public:
 	int OnVScroll(HWND hWnd, WORD type);
 	int OnHScroll(HWND hWnd, WORD type);
 
+	int OnRButtonDown(HWND hWnd, UINT x, UINT y);
+
 	int OnSize(HWND hWnd, WORD width, WORD height);
+
+	int OnDestroy(HWND hWnd);
+
+	int char2hex(TCHAR ch);
+	BOOL SearchNext(HWND hDlg, int hexByte, BOOL forward);
+
 
 private:
 	FileInfo fInfo;		// タブなどを使って複数のファイルを管理したい場合は配列などでもつ

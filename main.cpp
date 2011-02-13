@@ -12,10 +12,13 @@ TCHAR szWindowClass[MAX_LOADSTRING];	// メインウィンドウクラス
 PRINTDLGEX printDlgEx;
 
 static BinEdit binEdit;
+static HWND hSearchDlg = 0;
 
 static ATOM MyRegisterClass(HINSTANCE hInstance);
 static BOOL InitInstance(HINSTANCE, int);
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam);
+static INT_PTR CALLBACK SearchDlgProc(HWND hDlg, UINT umsg, WPARAM wParam, LPARAM lParam);
+static INT_PTR CALLBACK AboutDlgProc(HWND hDlg, UINT umsg, WPARAM wParam, LPARAM lParam);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
 	UNREFERENCED_PARAMETER(hPrevInstance);
@@ -43,9 +46,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDR_ACCELERATOR1));
 
 	while (GetMessage(&msg, NULL, 0, 0) > 0) {
-		if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg)) {
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
+		if (hSearchDlg == NULL || !IsDialogMessage(hSearchDlg, &msg)) {
+			if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg)) {
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
 		}
 	}
 		
@@ -73,7 +78,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
 	HWND hWnd;
 	int x = CW_USEDEFAULT, y = 0;
 	int w = CW_USEDEFAULT, h = 0;
-	/*
+	
 	HKEY hKey;		// 書きこむレジストリ・キーのハンドル
 	if (RegCreateKeyEx(HKEY_CURRENT_USER, MY_REGKEY, 0, NULL, 0,
 		KEY_ALL_ACCESS, NULL, &hKey, NULL) == ERROR_SUCCESS) {
@@ -100,10 +105,28 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
 		RegCloseKey(hKey);
 
 		if (rc == ERROR_SUCCESS) {
-			RECT
+			RECT rect;
+			SystemParametersInfo(SPI_GETWORKAREA, 0, &rect, 0);
+			if (x < rect.left) {
+				x = rect.left;
+			}
+			if (y < rect.top) {
+				y = rect.top;
+			}
+			if (w < 0 || rect.right - rect.left < w) {
+				w = (rect.right - rect.left) / 2;
+			}
+			if (h < 0 || rect.bottom - rect.top < h) {
+				h = (rect.bottom - rect.top) / 2;
+			}
+			if (x + w > rect.right) {
+				x = rect.right - w;
+			}
+			if (y + h > rect.bottom) {
+				y = rect.bottom - h;
+			}
 		}
 	}
-	*/
 
 	hWnd = CreateWindow(szWindowClass, szTitle,
 		WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL, 
@@ -154,8 +177,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case ID_QUIT:
-			binEdit.OnExit(hWnd);
-			PostQuitMessage(0);
+			if (!binEdit.OnExit(hWnd)) {
+				DestroyWindow(hWnd);
+			}
+			break;
+
+		case ID_SEARCH:
+			hSearchDlg = CreateDialog(hInst, MAKEINTRESOURCE(IDD_SEARCHDIALOG), hWnd, (DLGPROC)SearchDlgProc);
 			break;
 
 		case ID_FONT:
@@ -163,6 +191,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case ID_HELP_VERSION:
+			DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTDIALOG), hWnd, (DLGPROC)AboutDlgProc);
 			break;
 
 		default:
@@ -174,6 +203,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 		hdc = BeginPaint(hWnd, &ps);
 		binEdit.OnPaint(hWnd, hdc);
 		EndPaint(hWnd, &ps);
+		break;
+
+	//case WM_DROPFILES:
+	//	MessageBox(hWnd, (TCHAR*)lParam, szTitle, MB_OK);
+	//	break;
+
+	case WM_RBUTTONDOWN:
+		binEdit.OnRButtonDown(hWnd, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam));
 		break;
 
 	case WM_KEYDOWN:
@@ -202,6 +239,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 
 	case WM_DESTROY:
 		binEdit.OnExit(hWnd);
+		binEdit.OnDestroy(hWnd);
+		PostQuitMessage(0);
+
 		break;
 		
 	default:
@@ -209,4 +249,64 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 		
 	}
 	return 0;
+}
+
+INT_PTR CALLBACK SearchDlgProc(HWND hDlg, UINT umsg, WPARAM wParam, LPARAM lParam) {
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (umsg) {
+	case WM_INITDIALOG:
+		return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDC_BUTTON_FINDDOWN:
+		case IDC_BUTTON_FINDUP:
+			{
+				TCHAR buf[48] = {0};
+				UINT num = GetDlgItemText(hDlg, IDC_EDIT1, buf, sizeof(buf)/sizeof(buf[0]));
+				if (num == 2) {
+					int hex1st = binEdit.char2hex(buf[0]);
+					int hex2nd = binEdit.char2hex(buf[1]);
+
+					if (hex1st < 0 || hex2nd < 0) {
+						MessageBox(hDlg, _T("検索データの指定が正しくありません。2桁の16進数で指定してください。"), szTitle, MB_OK | MB_ICONWARNING);
+					} else {
+						int hexByte = hex1st << 4 | hex2nd;
+						binEdit.SearchNext(hDlg, hexByte, LOWORD(wParam) == IDC_BUTTON_FINDDOWN);
+					}
+				} else {
+					MessageBox(hDlg, _T("今のところ1バイトデータのみ検索可能です\r\n")
+						_T("2桁の16進数で指定してください。"), szTitle, MB_OK | MB_ICONWARNING);
+				}
+			}
+			return TRUE;
+			//break;
+
+		case IDCANCEL:
+			DestroyWindow(hDlg);
+			hSearchDlg = NULL;
+			return (INT_PTR)TRUE;
+		}
+		break;
+	}
+	return FALSE;
+}
+
+INT_PTR CALLBACK AboutDlgProc(HWND hDlg, UINT umsg, WPARAM wParam, LPARAM lParam) {
+	UNREFERENCED_PARAMETER(lParam);
+	switch (umsg) {
+	case WM_INITDIALOG:
+		return TRUE;
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam)) {
+		case IDOK:
+		case IDCANCEL:
+			EndDialog(hDlg, LOWORD(wParam));
+			return TRUE;
+		}
+		break;
+	}
+	return FALSE;
 }

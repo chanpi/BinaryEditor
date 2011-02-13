@@ -1,5 +1,6 @@
 #include "BinEdit.h"
 #include "HugeFile.h"
+#include "resource.h"
 #include <tchar.h>
 
 #define WRITEBUF_SIZE	1024
@@ -41,6 +42,17 @@ BinEdit::~BinEdit(void)
 int BinEdit::OnCreate(HWND hWnd) {
 	ZeroMemory(&printDlgEx, sizeof(printDlgEx));
 	CreateMainFont(hWnd);
+
+	// ファイル保存メニューの無効化
+	HMENU hMenu = GetMenu(hWnd);
+	if (hMenu != NULL) {
+		HMENU hFileMenu = GetSubMenu(hMenu, 0);
+		if (hFileMenu != NULL) {
+			EnableMenuItem(hFileMenu, ID_SAVE, MF_BYCOMMAND | MF_GRAYED);
+			EnableMenuItem(hFileMenu, ID_SAVEAS, MF_BYCOMMAND | MF_GRAYED);
+			EnableMenuItem(hFileMenu, ID_PRINT, MF_BYCOMMAND | MF_GRAYED);
+		}
+	}
 	return 0;
 }
 
@@ -98,7 +110,21 @@ int BinEdit::OnOpen(HWND hWnd) {
 		return -1;
 	}
 
-	return OpenFile(hWnd, fname);
+	int opened = OpenFile(hWnd, fname);
+
+	if (opened == 0) {
+		HMENU hMenu = GetMenu(hWnd);
+		if (hMenu != NULL) {
+			HMENU hFileMenu = GetSubMenu(hMenu, 0);
+			if (hFileMenu != NULL) {
+				EnableMenuItem(hFileMenu, ID_SAVE, MF_BYCOMMAND | MF_ENABLED);
+				EnableMenuItem(hFileMenu, ID_SAVEAS, MF_BYCOMMAND | MF_ENABLED);
+				EnableMenuItem(hFileMenu, ID_PRINT, MF_BYCOMMAND | MF_ENABLED);
+			}
+		}
+	}
+
+	return opened;
 }
 
 int BinEdit::OnSave(HWND /*hWnd*/) {
@@ -256,9 +282,6 @@ int BinEdit::OnExit(HWND hWnd) {
 			break;
 		}
 	}
-
-	PostQuitMessage(0);
-	DeleteObject(fInfo.hMainFont);
 	return rc;
 }
 
@@ -651,6 +674,21 @@ int BinEdit::OnHScroll(HWND hWnd, WORD type) {
 	return 0;
 }
 
+int BinEdit::OnRButtonDown(HWND hWnd, UINT x, UINT y) {
+	HMENU hMenu = GetMenu(hWnd);
+	if (hMenu != NULL) {
+		HMENU hFileMenu = GetSubMenu(hMenu, 0);
+		if (hFileMenu != NULL) {
+			POINT pt;
+			pt.x = x;
+			pt.y = y;
+			ClientToScreen(hWnd, &pt);
+			TrackPopupMenu(hFileMenu, 0, pt.x, pt.y, 0, hWnd, NULL);
+		}
+	}
+	return 0;
+}
+
 int BinEdit::OnSize(HWND hWnd, WORD width, WORD height) {
 	if (!fInfo.hfile.isLoaded()) {
 		return 0;
@@ -674,6 +712,93 @@ int BinEdit::OnSize(HWND hWnd, WORD width, WORD height) {
 	return 0;
 }
 
+
+int BinEdit::OnDestroy(HWND hWnd) {
+	RECT rect;
+	GetWindowRect(hWnd, &rect);
+	HKEY hKey;
+
+	if (RegCreateKeyEx(HKEY_CURRENT_USER, MY_REGKEY, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+		int val;
+		val = rect.left;
+		RegSetValueEx(hKey, REGVAL_X, 0, REG_DWORD, (BYTE*)&val, sizeof(val));
+		val = rect.top;
+		RegSetValueEx(hKey, REGVAL_Y, 0, REG_DWORD, (BYTE*)&val, sizeof(val));
+		val = rect.right - rect.left;
+		RegSetValueEx(hKey, REGVAL_W, 0, REG_DWORD, (BYTE*)&val, sizeof(val));
+		val = rect.bottom - rect.top;
+		RegSetValueEx(hKey, REGVAL_H, 0, REG_DWORD, (BYTE*)&val, sizeof(val));
+		RegCloseKey(hKey);
+	}
+
+	DeleteObject(fInfo.hMainFont);
+	return 0;
+}
+
+
+int BinEdit::char2hex(TCHAR ch) {
+	int rc = -1;
+	if (_T('0') <= ch && ch <= _T('9')) {
+		rc = ch - _T('0');
+	} else if (_T('A') <= ch && ch <= _T('F')) {
+		rc = ch - _T('A') + 10;
+	} else if (_T('a') <= ch && ch <= _T('f')) {
+		rc = ch - _T('a') + 10;
+	}
+	return rc;
+}
+
+// forward: TRUEで前方検索、FALSEで後方検索
+BOOL BinEdit::SearchNext(HWND hDlg, int hexByte, BOOL forward) {
+	BOOL rc = FALSE;
+	ULONGLONG offset = (fInfo.startLine + fInfo.cursorY) * 0x10 + (fInfo.cursorX / 2);
+	ULONGLONG fileSize = fInfo.hfile.getSize();
+
+	for (;;) {
+		if (forward) {
+			offset++;
+			if (offset >= fileSize) {
+				break;
+			}
+		} else {
+			offset--;
+			if (offset < 0) {
+				break;
+			}
+		}
+
+		int data = fInfo.hfile.get(offset);
+		if (data == ERR_DIRTY_VIEW) {
+		} else if (data < 0) {
+			break;
+		}
+
+		if (data == hexByte) {
+			rc = TRUE;
+			break;
+		}
+
+	}
+	if (rc) {
+		HWND hWndMain = GetParent(hDlg);
+
+		// 見つかった位置が現在の表示エリア内でなければ
+		// 表示位置を変更
+		ULONGLONG dispBegin = fInfo.startLine * 0x10;
+		ULONGLONG dispEnd = fInfo.startLine + fInfo.linesPerPage * 0x10;
+		if (offset < dispBegin || dispEnd <= offset) {
+			fInfo.startLine = offset / 0x10 - (fInfo.linesPerPage - 1);
+			InvalidateRect(hWndMain, NULL, FALSE);
+		}
+
+		// カーソル位置を変更
+		EnableCursor(hWndMain, FALSE);
+		fInfo.cursorY = (int)(offset / 0x10 - fInfo.startLine);
+		fInfo.cursorX = (offset & 0xF) * 2;
+		EnableCursor(hWndMain, TRUE);
+	}
+	return rc;
+}
 
 /////////////////////////////////////////////////////////////
 
@@ -868,7 +993,7 @@ void BinEdit::CreateMainFont(HWND hWnd) {
 	// フォントの高さは、リーディング部分を含めない定義で10ポイントとする
 	// 論理フォントの高さの単位は論理単位なので、変換する必要がある
 	fInfo.lf.lfHeight = -MulDiv(10, GetDeviceCaps(hdc, LOGPIXELSY), 72);
-	_tcscpy_s(fInfo.lf.lfFaceName, _T("Times New Roman"));
+	_tcscpy_s(fInfo.lf.lfFaceName, _T("Courier New"));
 	
 	HFONT hFont = CreateFontIndirect(&fInfo.lf);
 	if (hFont != NULL) {
